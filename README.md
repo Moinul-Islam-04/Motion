@@ -1,11 +1,14 @@
 # Motion
 
-Control your tabs with a wave of your hand. Motion uses your MacBook camera to
-track your hand and switches between tabs when you swipe left or right.
+Control your Mac with a wave of your hand. Motion uses your MacBook camera to
+track your hand and switches between **apps** (or tabs) when you swipe left or
+right.
 
-It works **system-wide** by sending keyboard shortcuts to whatever app is
-focused — `Ctrl+Tab` (next tab) and `Ctrl+Shift+Tab` (previous tab), which work
-in Chrome, VS Code, terminals, and most apps.
+By default it switches **applications**, exactly like Cmd+Tab: it holds Cmd
+while you swipe, taps Tab per swipe to move through the app list, and releases
+Cmd to commit once you pause. Pass `--mode tabs` to switch tabs in the focused
+app instead (via `Ctrl+Tab` / `Ctrl+Shift+Tab`, which work in Chrome, VS Code,
+terminals, and more).
 
 ## How it works
 
@@ -50,6 +53,7 @@ open hand left or right. Press `q` (or Ctrl+C in the terminal) to quit.
 
 | Flag | What it does |
 |------|--------------|
+| `--mode tabs` | Switch tabs instead of apps (default is `apps`). |
 | `--dry-run` | Detect and print swipes without sending keystrokes (great for testing). |
 | `--invert` | Swap swipe direction if left/right feel backwards. |
 | `--min-distance 0.18` | Sensitivity — smaller is more sensitive (default `0.22`). |
@@ -64,6 +68,6 @@ python main.py --dry-run
 
 ## Customizing the shortcut
 
-The keystrokes live in `motion/actions.py` (`TabSwitcher.next_tab` /
-`prev_tab`). Swap them for, say, `Cmd+Option+Right/Left` to make it
-Chrome/Safari-specific, or any other shortcut you like.
+The keystrokes live in `motion/actions.py`: `AppSwitcher` (Cmd+Tab cycling) and
+`TabSwitcher` (`Ctrl+Tab`). Swap them for any shortcut you like — e.g.
+`Cmd+Option+Right/Left` to make tab switching Chrome/Safari-specific.

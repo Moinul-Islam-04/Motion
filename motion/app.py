@@ -13,7 +13,7 @@ import mediapipe as mp
 from mediapipe.tasks import python as mp_python
 from mediapipe.tasks.python import vision
 
-from .actions import TabSwitcher
+from .actions import AppSwitcher, TabSwitcher
 from .gesture import SwipeDetector
 from .model import ensure_model
 
@@ -41,7 +41,8 @@ def _draw(frame, landmarks):
     cv2.circle(frame, (int(palm.x * w), int(palm.y * h)), 12, (255, 0, 0), 2)
 
 
-def run(camera=0, show_window=True, invert=False, min_distance=0.22, dry_run=False):
+def run(camera=0, show_window=True, invert=False, min_distance=0.22,
+        dry_run=False, mode="apps"):
     cap = cv2.VideoCapture(camera)
     if not cap.isOpened():
         print(f"Could not open camera {camera}. Is another app using it?", file=sys.stderr)
@@ -49,7 +50,7 @@ def run(camera=0, show_window=True, invert=False, min_distance=0.22, dry_run=Fal
 
     landmarker = _build_landmarker()
     detector = SwipeDetector(min_distance=min_distance)
-    switcher = TabSwitcher()
+    switcher = AppSwitcher() if mode == "apps" else TabSwitcher()
     last_action = ""
     start = time.time()
     last_ts = -1
@@ -83,22 +84,26 @@ def run(camera=0, show_window=True, invert=False, min_distance=0.22, dry_run=Fal
 
                 if swipe:
                     # In the mirrored frame, moving your hand to your right
-                    # increases x. "right" -> next tab by default.
+                    # increases x. "right" -> forward by default.
                     go_next = (swipe == "right") != invert
                     if go_next:
-                        last_action = "Next tab  ->"
+                        last_action = switcher.label_forward
                         if not dry_run:
-                            switcher.next_tab()
+                            switcher.forward()
                     else:
-                        last_action = "<- Prev tab"
+                        last_action = switcher.label_backward
                         if not dry_run:
-                            switcher.prev_tab()
+                            switcher.backward()
                     print(last_action)
 
                 if show_window:
                     _draw(frame, landmarks)
             else:
                 detector.reset()
+
+            # Lets the app switcher commit (release Cmd) after a pause.
+            if not dry_run:
+                switcher.tick()
 
             if show_window:
                 status = "COOLDOWN" if detector.in_cooldown() else "READY"
@@ -110,6 +115,7 @@ def run(camera=0, show_window=True, invert=False, min_distance=0.22, dry_run=Fal
     except KeyboardInterrupt:
         pass
     finally:
+        switcher.close()
         landmarker.close()
         cap.release()
         cv2.destroyAllWindows()
@@ -118,6 +124,8 @@ def run(camera=0, show_window=True, invert=False, min_distance=0.22, dry_run=Fal
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Swipe between tabs with your webcam.")
+    parser.add_argument("--mode", choices=["apps", "tabs"], default="apps",
+                        help="Swipe to switch apps (Cmd+Tab) or tabs (default apps).")
     parser.add_argument("--camera", type=int, default=0, help="Camera index (default 0).")
     parser.add_argument("--no-window", action="store_true", help="Run without the preview window.")
     parser.add_argument("--invert", action="store_true", help="Swap swipe direction.")
@@ -133,4 +141,5 @@ def main(argv=None):
         invert=args.invert,
         min_distance=args.min_distance,
         dry_run=args.dry_run,
+        mode=args.mode,
     )
