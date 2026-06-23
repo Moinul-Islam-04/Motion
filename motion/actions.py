@@ -1,11 +1,43 @@
-"""Turn detected swipes into keyboard shortcuts sent to the focused app."""
+"""Turn detected gestures into keyboard shortcuts sent to the focused app."""
 
 import time
 
 from pynput.keyboard import Controller, Key
 
 
-class TabSwitcher:
+class _Switcher:
+    """Shared keyboard plumbing. When dry_run is set, no keys are sent."""
+
+    def __init__(self, dry_run=False):
+        self.keyboard = Controller()
+        self.dry_run = dry_run
+
+    def _tap(self, key):
+        if self.dry_run:
+            return
+        self.keyboard.press(key)
+        self.keyboard.release(key)
+
+    def _press(self, key):
+        if not self.dry_run:
+            self.keyboard.press(key)
+
+    def _release(self, key):
+        if not self.dry_run:
+            self.keyboard.release(key)
+
+    def _combo(self, *modifiers, key):
+        if self.dry_run:
+            return
+        with self.keyboard.pressed(*modifiers):
+            self.keyboard.press(key)
+            self.keyboard.release(key)
+
+    def close(self):
+        """Release anything still held. Overridden where needed."""
+
+
+class TabSwitcher(_Switcher):
     """Switches tabs in the focused app via Ctrl+Tab / Ctrl+Shift+Tab.
 
     Works in Chrome, VS Code, most terminals, and many other apps.
@@ -14,77 +46,48 @@ class TabSwitcher:
     label_forward = "Next tab  ->"
     label_backward = "<- Prev tab"
 
-    def __init__(self):
-        self.keyboard = Controller()
-
     def forward(self):
-        with self.keyboard.pressed(Key.ctrl):
-            self._tap(Key.tab)
+        self._combo(Key.ctrl, key=Key.tab)
 
     def backward(self):
-        with self.keyboard.pressed(Key.ctrl, Key.shift):
-            self._tap(Key.tab)
-
-    def _tap(self, key):
-        self.keyboard.press(key)
-        self.keyboard.release(key)
-
-    def tick(self):
-        """Called every frame; nothing to do for tab switching."""
-
-    def close(self):
-        """Called on shutdown; nothing to release for tab switching."""
+        self._combo(Key.ctrl, Key.shift, key=Key.tab)
 
 
-class AppSwitcher:
+class AppSwitcher(_Switcher):
     """Switches apps the way Cmd+Tab does on macOS.
 
-    macOS only cycles through the app list while Cmd is held — a lone Cmd+Tab
-    just toggles the two most recent apps. So we hold Cmd down across swipes,
-    tap Tab (or Shift+Tab) per swipe to move the selection, and release Cmd
-    after a short pause to commit, exactly like letting go of Cmd+Tab.
-
-    Args:
-        hold_timeout: Seconds of no swiping before Cmd is released (commit).
-                      Keep this longer than the swipe cooldown so the switcher
-                      stays open between consecutive swipes.
+    macOS only walks the full app list while Cmd is held — a lone Cmd+Tab just
+    toggles the two most recent apps. So forward()/backward() press Cmd once and
+    keep it down, tapping Tab (or Shift+Tab) to move the highlight; close()
+    releases Cmd to commit the selection. CycleController drives this from
+    open/closed hand gestures.
     """
 
     label_forward = "Next app  ->"
     label_backward = "<- Prev app"
 
-    def __init__(self, hold_timeout=1.5):
-        self.keyboard = Controller()
-        self.hold_timeout = hold_timeout
+    def __init__(self, dry_run=False):
+        super().__init__(dry_run=dry_run)
         self._cmd_held = False
-        self._last_action = 0.0
 
     def _ensure_cmd(self):
         if not self._cmd_held:
-            self.keyboard.press(Key.cmd)
+            self._press(Key.cmd)
             self._cmd_held = True
-
-    def _tap(self, key):
-        self.keyboard.press(key)
-        self.keyboard.release(key)
 
     def forward(self):
         self._ensure_cmd()
         self._tap(Key.tab)
-        self._last_action = time.time()
 
     def backward(self):
         self._ensure_cmd()
+        if self.dry_run:
+            return
         with self.keyboard.pressed(Key.shift):
-            self._tap(Key.tab)
-        self._last_action = time.time()
-
-    def tick(self):
-        """Release Cmd (commit the selection) once swiping pauses."""
-        if self._cmd_held and time.time() - self._last_action > self.hold_timeout:
-            self.close()
+            self.keyboard.press(Key.tab)
+            self.keyboard.release(Key.tab)
 
     def close(self):
         if self._cmd_held:
-            self.keyboard.release(Key.cmd)
+            self._release(Key.cmd)
             self._cmd_held = False
