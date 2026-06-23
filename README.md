@@ -10,7 +10,8 @@ in Chrome, VS Code, terminals, and most apps.
 ## How it works
 
 1. **Capture** — OpenCV reads frames from the webcam.
-2. **Detect** — MediaPipe Hands finds your hand and its landmarks each frame.
+2. **Detect** — MediaPipe's `HandLandmarker` (Tasks API) finds your hand and its
+   landmarks each frame. The model (~7 MB) auto-downloads to `models/` on first run.
 3. **Recognize** — a rolling window of the palm's horizontal position decides
    whether you made a fast left or right swipe.
 4. **Act** — `pynput` sends the next/previous-tab keystroke to the focused app.

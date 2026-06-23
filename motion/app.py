@@ -1,90 +1,118 @@
-"""Webcam loop: track a hand, detect swipes, switch tabs."""
+"""Webcam loop: track a hand, detect swipes, switch tabs.
+
+Uses the MediaPipe Tasks API (HandLandmarker), which replaced the legacy
+mp.solutions.hands API in recent MediaPipe releases.
+"""
 
 import argparse
 import sys
+import time
 
 import cv2
 import mediapipe as mp
+from mediapipe.tasks import python as mp_python
+from mediapipe.tasks.python import vision
 
 from .actions import TabSwitcher
 from .gesture import SwipeDetector
+from .model import ensure_model
 
 # Landmark 9 (middle-finger base) is a stable proxy for the palm center.
 PALM_LANDMARK = 9
 
 
-def run(camera=0, show_window=True, invert=False, min_distance=0.22, dry_run=False):
-    hands_solution = mp.solutions.hands
-    drawing = mp.solutions.drawing_utils
+def _build_landmarker():
+    base_options = mp_python.BaseOptions(model_asset_path=ensure_model())
+    options = vision.HandLandmarkerOptions(
+        base_options=base_options,
+        num_hands=1,
+        running_mode=vision.RunningMode.VIDEO,
+        min_hand_detection_confidence=0.6,
+        min_tracking_confidence=0.5,
+    )
+    return vision.HandLandmarker.create_from_options(options)
 
+
+def _draw(frame, landmarks):
+    h, w = frame.shape[:2]
+    for lm in landmarks:
+        cv2.circle(frame, (int(lm.x * w), int(lm.y * h)), 4, (0, 255, 0), -1)
+    palm = landmarks[PALM_LANDMARK]
+    cv2.circle(frame, (int(palm.x * w), int(palm.y * h)), 12, (255, 0, 0), 2)
+
+
+def run(camera=0, show_window=True, invert=False, min_distance=0.22, dry_run=False):
     cap = cv2.VideoCapture(camera)
     if not cap.isOpened():
         print(f"Could not open camera {camera}. Is another app using it?", file=sys.stderr)
         return 1
 
+    landmarker = _build_landmarker()
     detector = SwipeDetector(min_distance=min_distance)
     switcher = TabSwitcher()
     last_action = ""
+    start = time.time()
+    last_ts = -1
 
     print("Motion is running. Swipe your hand left/right to switch tabs.")
     print("Press 'q' in the window (or Ctrl+C here) to quit.")
 
-    with hands_solution.Hands(
-        max_num_hands=1,
-        model_complexity=0,
-        min_detection_confidence=0.6,
-        min_tracking_confidence=0.5,
-    ) as hands:
-        try:
-            while cap.isOpened():
-                ok, frame = cap.read()
-                if not ok:
-                    continue
+    try:
+        while cap.isOpened():
+            ok, frame = cap.read()
+            if not ok:
+                continue
 
-                # Mirror the frame so it feels like a mirror to the user.
-                frame = cv2.flip(frame, 1)
-                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                rgb.flags.writeable = False
-                result = hands.process(rgb)
+            # Mirror the frame so it feels like a mirror to the user.
+            frame = cv2.flip(frame, 1)
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
 
-                if result.multi_hand_landmarks:
-                    landmarks = result.multi_hand_landmarks[0]
-                    x = landmarks.landmark[PALM_LANDMARK].x  # normalized 0..1
-                    swipe = detector.update(x)
+            # VIDEO mode needs a monotonically increasing timestamp in ms.
+            ts = int((time.time() - start) * 1000)
+            if ts <= last_ts:
+                ts = last_ts + 1
+            last_ts = ts
 
-                    if swipe:
-                        # In the mirrored frame, moving your hand to your right
-                        # increases x. "right" -> next tab by default.
-                        go_next = (swipe == "right") != invert
-                        if go_next:
-                            last_action = "Next tab  ->"
-                            if not dry_run:
-                                switcher.next_tab()
-                        else:
-                            last_action = "<- Prev tab"
-                            if not dry_run:
-                                switcher.prev_tab()
-                        print(last_action)
+            result = landmarker.detect_for_video(mp_image, ts)
 
-                    if show_window:
-                        drawing.draw_landmarks(
-                            frame, landmarks, hands_solution.HAND_CONNECTIONS
-                        )
-                else:
-                    detector.reset()
+            if result.hand_landmarks:
+                landmarks = result.hand_landmarks[0]
+                x = landmarks[PALM_LANDMARK].x  # normalized 0..1
+                swipe = detector.update(x)
+
+                if swipe:
+                    # In the mirrored frame, moving your hand to your right
+                    # increases x. "right" -> next tab by default.
+                    go_next = (swipe == "right") != invert
+                    if go_next:
+                        last_action = "Next tab  ->"
+                        if not dry_run:
+                            switcher.next_tab()
+                    else:
+                        last_action = "<- Prev tab"
+                        if not dry_run:
+                            switcher.prev_tab()
+                    print(last_action)
 
                 if show_window:
-                    status = "COOLDOWN" if detector.in_cooldown() else "READY"
-                    cv2.putText(frame, f"{status}  {last_action}", (12, 32),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
-                    cv2.imshow("Motion", frame)
-                    if cv2.waitKey(1) & 0xFF == ord("q"):
-                        break
-        except KeyboardInterrupt:
-            pass
-        finally:
-            cap.release()
-            cv2.destroyAllWindows()
+                    _draw(frame, landmarks)
+            else:
+                detector.reset()
+
+            if show_window:
+                status = "COOLDOWN" if detector.in_cooldown() else "READY"
+                cv2.putText(frame, f"{status}  {last_action}", (12, 32),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+                cv2.imshow("Motion", frame)
+                if cv2.waitKey(1) & 0xFF == ord("q"):
+                    break
+    except KeyboardInterrupt:
+        pass
+    finally:
+        landmarker.close()
+        cap.release()
+        cv2.destroyAllWindows()
     return 0
 
 

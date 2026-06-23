@@ -12,3 +12,6 @@ env/
 # Editors
 .vscode/
 .idea/
+
+# Downloaded model (fetched on first run)
+models/
